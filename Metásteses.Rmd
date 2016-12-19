@@ -1,0 +1,203 @@
+---
+title: "Metastasis Study"
+author: "João Roque"
+date: "27 de Janeiro de 2016"
+output: html_document
+---
+
+```{r}
+library(knitr)
+library(pROC)
+library(caret)
+library(MASS)
+library(neuralnet)
+library(randomForest)
+setwd('Dados')
+DATA=read.csv2('dados_classificacao.csv')
+
+```
+
+##Statistical Association of variables
+```{r}
+
+options(warn=-1)
+cicle=function(){
+dados=c()
+regioes=c('region403','region404','region407','region14','region415', ' region417','region418','region419','region428')
+for (i in 1:9){
+  tb=table(DATA[[i]],DATA$R)
+  kable(tb)
+  chisq=chisq.test(tb)
+  p=chisq$p.value
+  if(p>0.05){
+    dados=rbind(dados,regioes[i],'No association')
+    
+  }
+  else{
+    dados=rbind(dados,regioes[i],'Association')
+  }
+}
+return(dados)
+}
+cicle()
+```
+
+####Conclusion
+All variables have a statistic association with R except for region chr11region415.
+
+#Functions and Models
+```{r}
+
+datasets=function(){
+rm(testind)
+ind=1:nrow(DATA)
+testind=sample(ind,trunc(length(ind))*0.7)
+trainSet=DATA[testind,]
+testSet=DATA[-testind,]
+x=sum(testSet$R==1)/nrow(testSet)
+y=sum(trainSet$R==1)/nrow(trainSet)
+h=abs(x-y)
+while (h>2){
+  ind=1:nrow(DATA)
+  rm(testind)
+  testind=sample(ind,trunc(length(ind))*0.7)
+  trainSet=DATA[testind,]
+  testSet=DATA[-testind,]
+  x=sum(testSet$R==1)/nrow(testSet)
+  y=sum(trainSet$R==1)/nrow(trainSet)
+  h=abs(x-y)
+}
+return(list(trainSet=as.data.frame(trainSet),testSet=as.data.frame(testSet),testind=testind))
+}
+dt=datasets()
+
+randforest=function(){
+rf=randomForest(R~chr11region403+chr11region405+chr11region407+chr11region414+chr11region417+chr11region418+chr11region419+chr11region428,data=dt$trainSet)
+rftest=predict(rf,newdata=dt$testSet)
+return(list(rf=rf,rftest=rftest))
+}
+rand=randforest()
+
+#varImpPlot(rand$rf,sort=TRUE)
+#varImp(rand$rf)
+
+
+
+logreg=function(){
+  rl=glm(R~chr11region403+chr11region405+chr11region407+chr11region414+chr11region417+chr11region418+chr11region419+chr11region428,data=dt$trainSet)
+  rltest=predict(rl,newdata=dt$testSet)
+  return(list(rl=rl,rltest=rltest))
+}
+log=logreg()
+
+
+neura=function(){
+ 
+  nn=neuralnet(formula=R~chr11region403+chr11region405+chr11region407+chr11region414+chr11region417+chr11region418+chr11region419+chr11region428, data=dt$trainSet)
+  nntest=compute(nn,dt$testSet[,1:8])
+  return(list(nn=nn,nntest=nntest))
+}
+neur=neura()
+
+
+
+parametros=function(){
+conftest = table(rand$rftest>1.5,dt$testSet$R)
+E= (conftest[1,1]+conftest[2,2])/30
+S= (conftest[2,2]/(conftest[2,2]+conftest[1,2]))
+Es = (conftest[1,1]/(conftest[1,1]+conftest[2,1]))
+return(list(Exatidao=E, Sensibilidade=S,Especificidade=Es,matrix1=conftest))
+}
+
+par=parametros()
+
+parametros_log=function(){
+conftest = table(log$rltest>1.5,dt$testSet$R)
+E= (conftest[1,1]+conftest[2,2])/30
+S= (conftest[2,2]/(conftest[2,2]+conftest[1,2]))
+Es = (conftest[1,1]/(conftest[1,1]+conftest[2,1]))
+return(list(Exatidao=E, Sensibilidade=S,Especificidade=Es,matrix2=conftest))
+}
+par2=parametros_log()
+
+parametros_nn=function(){
+conftest = table(neur$nntest$net.result>1.5,dt$testSet$R)
+E= (conftest[1,1]+conftest[2,2])/30
+S= (conftest[2,2]/(conftest[2,2]+conftest[1,2]))
+Es = (conftest[1,1]/(conftest[1,1]+conftest[2,1]))
+return(list(Exatidao=E, Sensibilidade=S,Especificidade=Es,matrix3=conftest))
+}
+par3=parametros_nn()
+
+
+```
+
+
+#Various Models
+```{r}
+E_rand=c()
+E_log=c()
+S_rand=c()
+S_log=c()
+Es_rand=c()
+Es_log=c()
+E_nn=c()
+S_nn=c()
+Es_nn=c()
+j=0
+areaunder_rand=c()
+areaunder_log=c()
+areaunder_nn=c()
+while(j<50){
+  dt=datasets()
+  rand=randforest()
+  neurnet=neura()
+  pa=parametros()
+  log=logreg()
+  pa2=parametros_log()
+  pa3=parametros_nn()
+  j=j+1
+  
+  roc_nn=roc(dt$testSet$R,neurnet$nntest$net.result)
+  areaunder_nn=c(areaunder_nn,roc_nn$auc)
+  
+  roc_rand= roc(dt$testSet$R,rand$rftest)
+  areaunder_rand=c(areaunder_rand,roc_rand$auc)
+  roc_log=roc(dt$testSet$R,log$rltest)
+  areaunder_log=c(areaunder_log,roc_log$auc)
+  E_rand=c(E_rand,pa$Exatidao)
+  E_log=c(E_log,pa2$Exatidao)
+  S_rand=c(S_rand,pa$Sensibilidade)
+  S_log=c(S_log,pa2$Sensibilidade)
+  Es_rand=c(Es_rand,pa$Especificidade)
+  Es_log=c(Es_log,pa2$Especificidade)
+  E_nn=c(E_nn,pa3$Exatidao)
+  Es_nn=c(Es_nn,pa3$Especificidade)
+  S_nn=c(S_nn,pa3$Sensibilidade)
+}
+
+
+media_rand=mean(E_rand)
+media_log=mean(E_log)
+media_Srand=mean(S_rand)
+media_Slog=mean(S_log)
+media_Esrand=mean(Es_rand)
+media_Eslog=mean(Es_log)
+media_nn=mean(E_nn)
+media_Esnn=mean(Es_nn)
+media_Snn=mean(S_nn)
+
+```
+
+##Results
+
+```{r}
+boxplot(areaunder_rand,areaunder_log,areaunder_nn, names= c('RandomForest','Logistic Regression','Neural Networks'),ylab='AUC',col=c('Blue','Red','Green'),main='AUC in various models')
+
+
+d=as.table(rbind(c('    ','RandomForest','Logistic Regression','Neural Networks'),c('Accuracy',media_rand,media_log,media_nn),c('Sensibility',media_Srand,media_Slog,media_Snn),c('Specificity',media_Esrand,media_Eslog,media_Esnn)))
+kable(d)
+```
+
+
+
